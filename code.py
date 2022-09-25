@@ -16,7 +16,7 @@ bme280.sea_level_pressure = 1019.0
 pump_running = False
 pump_reverse_direction = False
 update_period = 30
-pump_max_run_time = 20
+pump_max_run_time = 120
 last_update_time = time.monotonic()
 pump_start_time = time.monotonic()
 
@@ -52,6 +52,7 @@ config_payload3 = """{"name": "Plant Environment Pressure",
 configuration_topic4 = "homeassistant/switch/plantEnvironmentW/config"
 config_payload4 = """{"name": "Plant Water Pump Run",
                    "device_class": "switch",
+                   "icon": "mdi:watering-can",
                    "state_topic": "homeassistant/switch/plantEnvironment/state",
                    "command_topic": "homeassistant/switch/plantEnvironmentW/set",
                    "value_template": "{{value_json.pump_run}}",
@@ -59,13 +60,16 @@ config_payload4 = """{"name": "Plant Water Pump Run",
 configuration_topic5 = "homeassistant/switch/plantEnvironmentWR/config"
 config_payload5 = """{"name": "Plant Water Pump Reverse Direction",
                    "device_class": "switch",
+                   "icon": "mdi:watering-can-outline",
                    "state_topic": "homeassistant/switch/plantEnvironment/state",
                    "command_topic": "homeassistant/switch/plantEnvironmentWR/set",
-                   "value_template": "{{value_json.pump_reverse}},"
+                   "value_template": "{{value_json.pump_reverse}}",
                    "qos": 1}"""
 configuration_topic6 = "homeassistant/sensor/plantEnvironmentM/config"
 config_payload6 = """{"name": "Plant Moisture",
                    "state_topic": "homeassistant/sensor/plantEnvironment/state",
+                   "unit_of_measurement": "",
+                   "icon": "mdi:water",
                    "value_template": "{{value_json.moisture}}"}"""
 
                     
@@ -82,6 +86,7 @@ mqtt_client = MQTT.MQTT(
     password=secrets["broker_pass"],
     socket_pool=pool,
     ssl_context=ssl.create_default_context(),
+    keep_alive=60,
 )
 
 
@@ -130,7 +135,7 @@ def update_switch_state():
     mqtt_client.publish(state_topic2,
                         "{\"pump_run\":\"" + pump_run_string + "\",\"pump_reverse\":\"" + pump_dir_string + "\"}")         
     
-mqtt_client.connect()
+mqtt_client.connect(clean_session=False)
 
 mqtt_client.on_connect = connect
 mqtt_client.on_disconnect = disconnect
@@ -152,15 +157,21 @@ mqtt_client.publish(configuration_topic6, config_payload6, retain=True)
 while True:
     try:
         mqtt_client.loop()
-    except (ValueError, RuntimeError) as e:
-        print("Failed to get data, retrying\n", e)
-        wifi.reset()
-        mqtt_client.reconnect()
+    except:
+        print("Failed to check for subscription data, resetting")
+        try:
+            mqtt_client.reconnect()
+        except:
+            print("Attmept to reconnect failed")
+        time.sleep(10)
         continue
     
     now = time.monotonic()
     if now - last_update_time > update_period:
-        mqtt_client.publish(state_topic, "{\"temperature\": %0.1f, \"humidity\": %0.1f, \"pressure\": %0.1f, \"moisture\": %d }" % (float(bme280.temperature*9/5+32), bme280.humidity, bme280.pressure, ss.moisture_read()))
+        try:
+            mqtt_client.publish(state_topic, "{\"temperature\": %0.1f, \"humidity\": %0.1f, \"pressure\": %0.1f, \"moisture\": %d }" % (float(bme280.temperature*9/5+32), bme280.humidity, bme280.pressure, ss.moisture_read()))
+        except:
+            print("Transmitting sensor data failed")
         last_update_time = now
         
     if pump_running:
@@ -178,6 +189,9 @@ while True:
             
     if now - pump_start_time > pump_max_run_time and pump_running:
         pump_running = False
-        update_switch_state()
+        try:
+            update_switch_state()
+        except:
+            print("Updating pump state failed")
         
     
